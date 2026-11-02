@@ -1,0 +1,1337 @@
+import { isFlow } from "../../src/api/flow"
+import { deepEnhancer } from "../../src/internal"
+import {
+    makeObservable,
+    action,
+    actionBound,
+    computed,
+    observable,
+    observableRef,
+    observableShallow,
+    isObservable,
+    isObservableObject,
+    isObservableProp,
+    isComputedProp,
+    isAction,
+    makeAutoObservable,
+    autorun,
+    extendObservable,
+    getDebugName,
+    _getAdministration,
+    configure,
+    flow,
+    flowBound,
+    override,
+    ObservableSet,
+    ObservableMap
+} from "../../src/mobx"
+
+test("makeObservable picks up annotations", () => {
+    class Test {
+        x = 3
+        y = 2
+
+        get double() {
+            return this.x * 2
+        }
+
+        unbound() {
+            return this
+        }
+
+        bound() {
+            return this
+        }
+
+        constructor() {
+            makeObservable(this, {
+                x: observable,
+                double: computed,
+                unbound: action,
+                bound: actionBound
+            })
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "x")).toBe(true)
+    expect(isObservableProp(t, "y")).toBe(false)
+
+    expect(isComputedProp(t, "double")).toBe(true)
+    expect(isAction(t.unbound)).toBe(true)
+    expect(isAction(t.bound)).toBe(true)
+    expect(t.unbound.call(undefined)).toBe(undefined)
+    expect(t.bound.call(undefined)).toBe(t)
+})
+
+test("makeObservable supports private fields", () => {
+    class Test {
+        private x = 3
+        private y = 2
+
+        private get double() {
+            return this.x * 2
+        }
+
+        private unbound() {
+            return this
+        }
+
+        private bound() {
+            return this
+        }
+
+        constructor() {
+            makeObservable<this, "x" | "double" | "unbound" | "bound">(this, {
+                x: observable,
+                double: computed,
+                unbound: action,
+                bound: actionBound
+            })
+            if (3 - 1 === 4) {
+                makeObservable<this, "x" | "double" | "unbound" | "bound">(this, {
+                    // @ts-expect-error
+                    z: false
+                })
+
+                makeObservable(this, {
+                    // @ts-expect-error
+                    z: false
+                })
+            }
+        }
+    }
+
+    const t: any = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "x")).toBe(true)
+    expect(isObservableProp(t, "y")).toBe(false)
+
+    expect(isComputedProp(t, "double")).toBe(true)
+    expect(isAction(t.unbound)).toBe(true)
+    expect(isAction(t.bound)).toBe(true)
+    expect(t.unbound.call(undefined)).toBe(undefined)
+    expect(t.bound.call(undefined)).toBe(t)
+})
+
+test("makeObservable has sane defaults", () => {
+    class Test {
+        x = 3
+        y = 2
+
+        get double() {
+            return this.x * 2
+        }
+
+        unbound() {
+            return this
+        }
+
+        bound() {
+            return this
+        }
+
+        constructor() {
+            makeObservable(this, {
+                x: true,
+                y: false,
+                double: true,
+                unbound: true,
+                bound: actionBound
+            })
+            if (3 - 1 === 4) {
+                makeObservable(this, {
+                    x: false,
+                    // @ts-expect-error
+                    z: true
+                })
+            }
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "x")).toBe(true)
+    expect(isObservableProp(t, "y")).toBe(false)
+
+    expect(isComputedProp(t, "double")).toBe(true)
+    expect(isAction(t.unbound)).toBe(true)
+    expect(isAction(t.bound)).toBe(true)
+    expect(t.unbound.call(undefined)).toBe(undefined)
+    expect(t.bound.call(undefined)).toBe(t)
+})
+
+test("makeObservable supports autoBind", async () => {
+    class Test {
+        action() {
+            return this
+        }
+
+        actionBound() {
+            return this
+        }
+
+        *flow() {
+            return this
+        }
+
+        *flowBound() {
+            return this
+        }
+
+        constructor() {
+            makeObservable(
+                this,
+                {
+                    action: action,
+                    actionBound: true,
+                    flow: flow,
+                    flowBound: true
+                },
+                {
+                    autoBind: true
+                }
+            )
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isAction(t.action)).toBe(true)
+    expect(isAction(t.actionBound)).toBe(true)
+    expect(t.action.call(undefined)).toBe(undefined)
+    expect(t.actionBound.call(undefined)).toBe(t)
+    expect(isFlow(t.flow)).toBe(true)
+    expect(isFlow(t.flowBound)).toBe(true)
+    expect(await t.flow.call(undefined)).toBe(undefined)
+    expect(await t.flowBound.call(undefined)).toBe(t)
+})
+
+test("Extending builtins is not support #2765", () => {
+    class ObservableMapLimitedSize extends ObservableMap {
+        limitSize = 0
+        constructor(map: Map<any, any>, enhancer = deepEnhancer, name: string) {
+            super(map, enhancer, name)
+            makeObservable(this, {
+                limitSize: observable
+            })
+        }
+    }
+
+    class ObservableSetLimitedSize extends ObservableSet {
+        limitSize = 0
+        constructor(set: Set<any>, enhancer = deepEnhancer, name: string) {
+            super(set, enhancer, name)
+            makeObservable(this, {
+                limitSize: observable
+            })
+        }
+    }
+
+    expect(() => {
+        new ObservableMapLimitedSize(new Map([["key", "val"]]), deepEnhancer, "TestObject")
+    }).toThrowErrorMatchingInlineSnapshot(`
+        "[MobX] Cannot convert 'TestObject' into observable object:
+        The target is already observable of different type.
+        Extending builtins is not supported."
+    `)
+    expect(() => {
+        new ObservableSetLimitedSize(new Set(), deepEnhancer, "TestObject")
+    }).toThrowErrorMatchingInlineSnapshot(`
+        "[MobX] Cannot convert 'TestObject' into observable object:
+        The target is already observable of different type.
+        Extending builtins is not supported."
+    `)
+})
+
+test("makeAutoObservable has sane defaults", () => {
+    class Test {
+        x = 3
+        y = 2
+
+        get double() {
+            return this.x * 2
+        }
+
+        unbound() {
+            return this
+        }
+
+        bound() {
+            return this
+        }
+
+        constructor() {
+            makeAutoObservable(this)
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "x")).toBe(true)
+    expect(isObservableProp(t, "y")).toBe(true) // will be observable
+
+    expect(isComputedProp(t, "double")).toBe(true)
+    expect(isAction(t.unbound)).toBe(true)
+    expect(isAction(t.bound)).toBe(true)
+    expect(t.unbound.call(undefined)).toBe(undefined)
+    expect(t.bound.call(undefined)).toBe(undefined)
+})
+
+test("makeAutoObservable supports autoBind", async () => {
+    class Test {
+        action() {
+            return this
+        }
+
+        *flow() {
+            return this
+        }
+
+        constructor() {
+            makeAutoObservable(this, {}, { autoBind: true })
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isAction(t.action)).toBe(true)
+    expect(isFlow(t.flow)).toBe(true)
+    expect(t.action.call(undefined)).toBe(t)
+    expect(await t.flow.call(undefined)).toBe(t)
+})
+
+test("makeAutoObservable allows overrides", () => {
+    class Test {
+        x = 3
+        y = 2
+
+        get double() {
+            return this.x * 2
+        }
+
+        unbound() {
+            return this
+        }
+
+        bound() {
+            return this
+        }
+
+        constructor() {
+            makeAutoObservable(this, {
+                unbound: true,
+                bound: actionBound,
+                y: false
+            })
+            if (3 - 1 === 4) {
+                makeObservable(this, {
+                    // @ts-expect-error
+                    z: true
+                })
+            }
+        }
+    }
+
+    const t = new Test()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "x")).toBe(true)
+    expect(isObservableProp(t, "y")).toBe(false)
+
+    expect(isComputedProp(t, "double")).toBe(true)
+    expect(isAction(t.unbound)).toBe(true)
+    expect(isAction(t.bound)).toBe(true)
+    expect(t.unbound.call(undefined)).toBe(undefined)
+    expect(t.bound.call(undefined)).toBe(t)
+})
+
+test("makeAutoObservable cannot be used on subclasses", () => {
+    class A {}
+
+    class B extends A {
+        constructor() {
+            super()
+            makeAutoObservable(this)
+        }
+    }
+
+    expect(() => {
+        new B()
+    }).toThrowErrorMatchingInlineSnapshot(
+        `"[MobX] 'makeAutoObservable' can only be used for classes that don't have a superclass"`
+    )
+})
+
+test("makeAutoObservable cannot be used on observable objects", () => {
+    expect(() => {
+        makeAutoObservable(observable({ x: 3 }))
+    }).toThrowErrorMatchingInlineSnapshot(
+        `"[MobX] makeAutoObservable can only be used on objects not already made observable"`
+    )
+})
+
+test("makeAutoObservable actions can be used for state updaters and state readers", () => {
+    class A {
+        x = 1
+
+        constructor() {
+            makeAutoObservable(this)
+        }
+
+        double() {
+            return this.x * 2
+        }
+
+        addTwo() {
+            this.x++
+            this.x++
+        }
+    }
+
+    const events: number[] = []
+    const a = new A()
+
+    expect(isObservableProp(a, "x")).toBe(true)
+    expect(isAction(a.double)).toBe(true)
+    expect(isAction(a.addTwo)).toBe(true)
+
+    const d = autorun(() => {
+        events.push(a.double())
+    })
+
+    a.addTwo()
+
+    expect(a.x).toBe(3)
+
+    // tracked and batched!
+    expect(events).toEqual([2, 6])
+
+    d()
+})
+
+test("observable actions can be used for state updaters and state readers", () => {
+    const events: number[] = []
+    const a = observable({
+        x: 1,
+        double() {
+            return this.x * 2
+        },
+        addTwo() {
+            this.x++
+            this.x++
+        }
+    })
+    const d = autorun(() => {
+        events.push(a.double())
+    })
+
+    expect(isObservableProp(a, "x")).toBe(true)
+    expect(isAction(a.double)).toBe(true)
+    expect(isAction(a.addTwo)).toBe(true)
+
+    a.addTwo()
+
+    expect(a.x).toBe(3)
+
+    // tracked and batched!
+    expect(events).toEqual([2, 6])
+
+    d()
+})
+
+test("makeObservable can be used late and support non-enumerable getters", () => {
+    function MyClass() {
+        this.x = 1
+        Object.defineProperty(this, "double", {
+            get() {
+                return this.x
+            },
+            configurable: true,
+            enumerable: false
+        })
+        this.inc = function () {
+            this.x++
+        }
+        makeObservable(this, {
+            x: observable,
+            double: computed,
+            inc: action
+        })
+    }
+    const i = new MyClass()
+
+    expect(isObservableProp(i, "x")).toBe(true)
+    expect(isComputedProp(i, "double")).toBe(true)
+    expect(isAction(i.inc)).toBe(true)
+})
+
+test("makeAutoObservable can be used late and support non-enumerable getters", () => {
+    function MyClass() {
+        this.x = 1
+        Object.defineProperty(this, "double", {
+            get() {
+                return this.x
+            },
+            configurable: true,
+            enumerable: false
+        })
+        this.inc = function () {
+            this.x++
+        }
+        makeAutoObservable(this)
+    }
+    // check if annotations are cached
+    expect(Object.getOwnPropertySymbols(MyClass.prototype).length).toBe(0)
+    const x = new MyClass()
+    expect(Object.getOwnPropertySymbols(MyClass.prototype).length).toBe(1)
+
+    const i = new MyClass()
+
+    expect(isObservableProp(i, "x")).toBe(true)
+    expect(isComputedProp(i, "double")).toBe(true)
+    expect(isAction(i.inc)).toBe(true)
+})
+
+test("extendObservable can be used late and support non-enumerable getters #2386", () => {
+    function MyClass() {
+        const args = {
+            x: 1,
+            inc() {
+                this.x++
+            }
+        }
+        Object.defineProperty(args, "double", {
+            get() {
+                return this.x
+            },
+            enumerable: false
+        })
+        extendObservable(this, args)
+    }
+    const i = new MyClass()
+
+    expect(isObservableProp(i, "x")).toBe(true)
+    expect(isComputedProp(i, "double")).toBe(true)
+    expect(isAction(i.inc)).toBe(true)
+})
+
+test("makeObservable doesn't trigger in always mode'", () => {
+    configure({
+        enforceActions: "always"
+    })
+    class C {
+        x = 3
+        constructor() {
+            makeAutoObservable(this)
+        }
+    }
+
+    expect(new C()).toBeTruthy()
+})
+
+test("#2457", () => {
+    class BaseClass {
+        value1: number | undefined = undefined
+
+        constructor() {
+            makeObservable(this, {
+                value1: observable
+            })
+        }
+    }
+
+    class SubClass extends BaseClass {
+        constructor() {
+            super()
+            makeObservable(this, {
+                value1Computed: computed
+            })
+        }
+
+        get value1Computed() {
+            return this.value1
+        }
+    }
+
+    const t = new SubClass()
+    expect(isObservableObject(t)).toBe(true)
+    expect(isObservableProp(t, "value1")).toBe(true)
+    expect(isComputedProp(t, "value1Computed")).toBe(true)
+})
+
+test("makeAutoObservable respects options.deep #2542'", () => {
+    const o = makeAutoObservable({ nested: {} }, {}, { deep: false })
+    expect(isObservable(o)).toBe(true)
+    expect(isObservableProp(o, "nested")).toBe(true)
+    expect(isObservable(o.nested)).toBe(false)
+
+    const deepO = makeAutoObservable({ nested: {} }, {}, { deep: true })
+    expect(isObservable(deepO)).toBe(true)
+    expect(isObservableProp(deepO, "nested")).toBe(true)
+    expect(isObservable(deepO.nested)).toBe(true)
+})
+
+test("makeObservable respects options.name #2614'", () => {
+    const name = "DebugName"
+
+    class Clazz {
+        timer = 0
+        constructor() {
+            makeObservable(this, { timer: observable }, { name })
+        }
+    }
+
+    const instance = new Clazz()
+    const plain = makeObservable({ timer: 0 }, { timer: observable }, { name })
+
+    expect(getDebugName(instance)).toBe(name)
+    expect(getDebugName(plain)).toBe(name)
+})
+// "makeObservable + action + arrow function + subclass override #2614"
+
+test("class - annotations", async () => {
+    class Foo {
+        ["observable"] = { nested: {} };
+        ["observableRef"] = { nested: {} };
+        ["observableShallow"] = { nested: {} }
+
+        constructor() {
+            makeObservable(this, {
+                observable: observable,
+                observableRef: observableRef,
+                observableShallow: observableShallow,
+                computed: computed,
+                action: action,
+                actionBound: actionBound,
+                flow: flow,
+                flowBound: flowBound
+            })
+        }
+
+        get computed() {
+            return this
+        }
+
+        ["action"]() {
+            return this
+        }
+
+        ["actionBound"]() {
+            return this
+        }
+
+        *["flow"]() {
+            return this
+        }
+
+        *["flowBound"]() {
+            return this
+        }
+    }
+
+    const foo = new Foo()
+    expect(isObservableObject(foo)).toBe(true)
+
+    expect(isObservableProp(foo, "observable")).toBe(true)
+    expect(isObservableObject(foo["observable"])).toBe(true)
+
+    expect(isObservableProp(foo, "observableRef")).toBe(true)
+    expect(isObservableObject(foo["observableRef"])).toBe(false)
+    expect(isObservableObject(foo["observableRef"].nested)).toBe(false)
+
+    expect(isObservableProp(foo, "observableShallow")).toBe(true)
+    expect(isObservableObject(foo["observableShallow"])).toBe(true)
+    expect(isObservableObject(foo["observableShallow"].nested)).toBe(false)
+
+    expect(isComputedProp(foo, "computed")).toBe(true)
+
+    expect(isAction(foo["action"])).toBe(true)
+    expect(Object.getPrototypeOf(foo).hasOwnProperty("action")).toBe(true)
+    expect(foo.hasOwnProperty("action")).toBe(false)
+    expect(foo["action"].call(null)).toBe(null)
+
+    expect(isAction(foo["actionBound"])).toBe(true)
+    expect(Object.getPrototypeOf(foo).hasOwnProperty("actionBound")).toBe(true)
+    expect(foo.hasOwnProperty("actionBound")).toBe(true)
+    expect(foo["actionBound"].call(null)).toBe(foo)
+
+    expect(isFlow(foo["flow"])).toBe(true)
+    expect(Object.getPrototypeOf(foo).hasOwnProperty("flow")).toBe(true)
+    expect(foo.hasOwnProperty("flow")).toBe(false)
+
+    expect(isFlow(foo["flowBound"])).toBe(true)
+    expect(Object.getPrototypeOf(foo).hasOwnProperty("flowBound")).toBe(true)
+    expect(foo.hasOwnProperty("flowBound")).toBe(true)
+    expect(await foo["flowBound"].call(null)).toBe(foo)
+})
+
+test("subclass - annotation", () => {
+    class Parent {
+        ["observable"] = { nested: {} };
+        ["observableRef"] = { nested: {} };
+        ["observableShallow"] = { nested: {} }
+
+        constructor() {
+            makeObservable(this, {
+                observable: observable,
+                observableRef: observableRef,
+                observableShallow: observableShallow,
+                computed: computed,
+                action: action,
+                actionBound: actionBound,
+                flow: flow
+            })
+        }
+
+        get computed() {
+            return this
+        }
+
+        ["action"]() {
+            return this
+        }
+
+        ["actionBound"]() {
+            return this
+        }
+
+        *["flow"]() {
+            return this
+        }
+    }
+
+    class Child extends Parent {
+        ["observable2"] = { nested: {} };
+        ["observableRef2"] = { nested: {} };
+        ["observableShallow2"] = { nested: {} }
+
+        constructor() {
+            super()
+            makeObservable(this, {
+                observable2: observable,
+                observableRef2: observableRef,
+                observableShallow2: observableShallow,
+                computed2: computed,
+                action2: action,
+                actionBound2: actionBound,
+                flow2: flow
+            })
+        }
+
+        get computed2() {
+            return this
+        }
+
+        ["action2"]() {
+            return this
+        }
+
+        ["actionBound2"]() {
+            return this
+        }
+
+        *["flow2"]() {
+            return this
+        }
+    }
+
+    const child = new Child()
+    expect(isObservableObject(child)).toBe(true)
+
+    expect(isObservableProp(child, "observable")).toBe(true)
+    expect(isObservableObject(child["observable"])).toBe(true)
+
+    expect(isObservableProp(child, "observableRef")).toBe(true)
+    expect(isObservableObject(child["observableRef"])).toBe(false)
+    expect(isObservableObject(child["observableRef"].nested)).toBe(false)
+
+    expect(isObservableProp(child, "observableShallow")).toBe(true)
+    expect(isObservableObject(child["observableShallow"])).toBe(true)
+    expect(isObservableObject(child["observableShallow"].nested)).toBe(false)
+
+    expect(isComputedProp(child, "computed")).toBe(true)
+
+    expect(isAction(child["action"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("action")).toBe(false)
+    expect(child.hasOwnProperty("action")).toBe(false)
+    expect(child["action"].call(null)).toBe(null)
+
+    expect(isAction(child["actionBound"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("actionBound")).toBe(false)
+    expect(child.hasOwnProperty("actionBound")).toBe(true)
+    expect(child["actionBound"].call(null)).toBe(child)
+
+    expect(isFlow(child["flow"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("flow")).toBe(false)
+    expect(child.hasOwnProperty("flow")).toBe(false)
+
+    expect(isObservableProp(child, "observable2")).toBe(true)
+    expect(isObservableObject(child["observable2"])).toBe(true)
+
+    expect(isObservableProp(child, "observableRef2")).toBe(true)
+    expect(isObservableObject(child["observableRef2"])).toBe(false)
+    expect(isObservableObject(child["observableRef2"].nested)).toBe(false)
+
+    expect(isObservableProp(child, "observableShallow2")).toBe(true)
+    expect(isObservableObject(child["observableShallow2"])).toBe(true)
+    expect(isObservableObject(child["observableShallow2"].nested)).toBe(false)
+
+    expect(isComputedProp(child, "computed2")).toBe(true)
+
+    expect(isAction(child["action2"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("action2")).toBe(true)
+    expect(child.hasOwnProperty("action2")).toBe(false)
+    expect(child["action2"].call(null)).toBe(null)
+
+    expect(isAction(child["actionBound2"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("actionBound2")).toBe(true)
+    expect(child.hasOwnProperty("actionBound2")).toBe(true)
+    expect(child["actionBound2"].call(null)).toBe(child)
+
+    expect(isFlow(child["flow2"])).toBe(true)
+    expect(Object.getPrototypeOf(child).hasOwnProperty("flow2")).toBe(true)
+    expect(child.hasOwnProperty("flow2")).toBe(false)
+})
+
+test("subclass - annotation - override", async () => {
+    class Parent {
+        constructor() {
+            makeObservable(this, {
+                action: action,
+                ["actionBound"]: actionBound,
+                computed: computed,
+                flow: flow,
+                ["flowBound"]: flowBound
+            })
+        }
+        action() {
+            return "parent"
+        }
+        ["actionBound"]() {
+            return "parent"
+        }
+        *flow() {
+            return "parent"
+        }
+        *["flowBound"]() {
+            return "parent"
+        }
+        get computed() {
+            return "parent"
+        }
+    }
+
+    class Child extends Parent {
+        action() {
+            return "child of " + super.action()
+        }
+        ["actionBound"]() {
+            return "child of " + super["actionBound"]()
+        }
+        get computed() {
+            return "child"
+        }
+        *flow(): any {
+            const parent = yield super.flow()
+            return "child of " + parent
+        }
+        *["flowBound"](): any {
+            const parent = yield super["flowBound"]()
+            return "child of " + parent
+        }
+    }
+    const child = new Child()
+
+    // Action
+    expect(isAction(Parent.prototype.action)).toBe(true)
+    expect(isAction(Child.prototype.action)).toBe(true)
+    expect(isAction(child.action)).toBe(true)
+
+    expect(child.hasOwnProperty("action")).toBe(false)
+
+    expect(Parent.prototype.action()).toBe("parent")
+    expect(Child.prototype.action()).toBe("child of parent")
+    expect(child.action()).toBe("child of parent")
+
+    // Action bound
+    expect(isAction(Parent.prototype["actionBound"])).toBe(false)
+    expect(isAction(Child.prototype["actionBound"])).toBe(false)
+    expect(isAction(child["actionBound"])).toBe(true)
+
+    expect(child.hasOwnProperty("actionBound")).toBe(true)
+
+    expect(Parent.prototype["actionBound"]()).toBe("parent")
+    expect(Child.prototype["actionBound"]()).toBe("child of parent")
+    expect(child["actionBound"]()).toBe("child of parent")
+
+    // Computed
+    expect(isComputedProp(child, "computed")).toBe(true)
+    expect(child.computed).toBe("child")
+
+    // Flow
+    expect(isFlow(Parent.prototype.flow)).toBe(true)
+    expect(isFlow(Child.prototype.flow)).toBe(true)
+    expect(isFlow(child.flow)).toBe(true)
+
+    expect(child.hasOwnProperty("flow")).toBe(false)
+
+    expect(await Parent.prototype.flow()).toBe("parent")
+    expect(await Child.prototype.flow()).toBe("child of parent")
+    expect(await child.flow()).toBe("child of parent")
+
+    // Flow bound
+    expect(isFlow(Parent.prototype["flowBound"])).toBe(true)
+    expect(isFlow(Child.prototype["flowBound"])).toBe(true)
+    expect(isFlow(child["flowBound"])).toBe(true)
+
+    expect(child.hasOwnProperty("flowBound")).toBe(true)
+
+    expect(await Parent.prototype["flowBound"]()).toBe("parent")
+    expect(await Child.prototype["flowBound"]()).toBe("child of parent")
+    expect(await child["flowBound"]()).toBe("child of parent")
+})
+
+test("subclass - cannot re-annotate", () => {
+    class Parent {
+        observable = 1
+        constructor() {
+            makeObservable(this, {
+                action: action,
+                observable: observable,
+                actionBound: actionBound,
+                flow: flow,
+                flowBound: flowBound,
+                computed: computed
+            })
+        }
+        action() {}
+        actionBound() {}
+        *flow() {}
+        *flowBound() {}
+        get computed() {
+            return this
+        }
+    }
+
+    class ChildAction extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                action: action
+            })
+        }
+        action() {}
+    }
+
+    class ChildActionBound extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                actionBound: actionBound
+            })
+        }
+        actionBound() {}
+    }
+
+    class ChildFlow extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                flow: flow
+            })
+        }
+        *flow() {}
+    }
+
+    class ChildFlowBound extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                flowBound: flowBound
+            })
+        }
+        *flowBound() {}
+    }
+
+    class ChildObservable extends Parent {
+        constructor() {
+            super()
+            this.observable = 2
+            makeObservable(this, {
+                observable: observable
+            })
+        }
+    }
+
+    class ChildComputed extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                computed: computed
+            })
+        }
+        get computed() {
+            return this
+        }
+    }
+
+    expect(() => new ChildAction()).toThrow(/^\[MobX\] Cannot apply/)
+    expect(() => new ChildActionBound()).toThrow(/^\[MobX\] Cannot apply/)
+    expect(() => new ChildFlow()).toThrow(/^\[MobX\] Cannot apply/)
+    expect(() => new ChildFlowBound()).toThrow(/^\[MobX\] Cannot apply/)
+    expect(() => new ChildObservable()).toThrow(/^\[MobX\] Cannot apply/)
+    expect(() => new ChildComputed()).toThrow(/^\[MobX\] Cannot apply/)
+})
+
+test("subclass - cannot redefine property", () => {
+    class Parent {
+        observable = 1
+        constructor() {
+            makeObservable(this, {
+                observable: observable,
+                action: action,
+                computed: computed
+            })
+        }
+        action = () => {}
+        get computed() {
+            return this
+        }
+    }
+
+    class ChildAction extends Parent {
+        action = () => {}
+    }
+
+    class ChildObservable extends Parent {
+        observable = 2
+    }
+
+    class ChildComputed extends Parent {
+        // @ts-ignore
+        computed = "foo"
+    }
+
+    expect(() => new ChildAction()).toThrow(/^Cannot redefine property/)
+    expect(() => new ChildObservable()).toThrow(/^Cannot redefine property/)
+    expect(() => new ChildComputed()).toThrow(/^Cannot redefine property/)
+})
+
+test("override", () => {
+    class Parent {
+        constructor() {
+            makeObservable(this, {
+                action: action
+            })
+        }
+        action() {
+            return "parent"
+        }
+    }
+
+    class Child extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                action: override
+            })
+        }
+        action() {
+            return `child of ${super.action()}`
+        }
+    }
+
+    const child = new Child()
+    expect(isAction(Parent.prototype.action))
+    expect(Parent.prototype.action()).toBe("parent")
+    expect(isAction(Child.prototype.action))
+    expect(isAction(child.action)).toBe(true)
+
+    expect(child.action()).toBe("child of parent")
+})
+
+test("override must override", () => {
+    class Parent {
+        action() {
+            return "parent"
+        }
+    }
+
+    class Child extends Parent {
+        constructor() {
+            super()
+            makeObservable(this, {
+                action: override
+            })
+        }
+        action() {
+            return `child of ${super.action()}`
+        }
+    }
+
+    expect(() => new Child()).toThrow(
+        /^\[MobX\] 'Child@\d+\.action' is annotated with 'override', but no such annotated member was found on prototype\./
+    )
+})
+
+test("makeAutoObservable + production build #2751", () => {
+    const mobx = require(`../../dist/mobx.cjs.production.min.js`)
+    class Foo {
+        x = "x"
+        constructor() {
+            mobx.makeAutoObservable(this)
+        }
+    }
+    const foo = new Foo()
+    expect(mobx.isObservableObject(foo)).toBe(true)
+    expect(mobx.isObservableProp(foo, "x")).toBe(true)
+})
+
+// Makes sure that we don't define properties on proto as non-writable,
+// as that would prevent initializing prop on instance via assigment.
+test("inherited fields are assignable before makeObservable", () => {
+    class Foo {
+        constructor() {
+            this.action = () => {}
+            this.flow = function* flow() {}
+            makeObservable(this, {
+                action,
+                flow
+            })
+        }
+
+        action() {}
+        *flow() {}
+    }
+
+    const foo1 = new Foo()
+    expect(isAction(foo1.action)).toBe(true)
+    expect(isFlow(foo1.flow)).toBe(true)
+
+    const foo2 = new Foo()
+    expect(isAction(foo2.action)).toBe(true)
+    expect(isFlow(foo2.flow)).toBe(true)
+})
+
+test("makeAutoObservable + symbolic keys", () => {
+    const observableSymbol = Symbol()
+    const computedSymbol = Symbol()
+    const actionSymbol = Symbol()
+
+    class Foo {
+        observable = "observable";
+        [observableSymbol] = "observableSymbol"
+        get [computedSymbol]() {
+            return this.observable
+        }
+        [actionSymbol]() {}
+
+        constructor() {
+            makeAutoObservable(this)
+        }
+    }
+
+    ;[new Foo(), new Foo()].forEach(foo => {
+        expect(isObservableProp(foo, "observable")).toBe(true)
+        expect(isObservableProp(foo, observableSymbol)).toBe(true)
+        expect(isComputedProp(foo, computedSymbol)).toBe(true)
+        expect(isAction(foo[actionSymbol])).toBe(true)
+    })
+})
+
+test("makeAutoObservable + overrides + toString", () => {
+    class Money {
+        amount = 1
+        currency = "EUR"
+
+        constructor() {
+            makeAutoObservable(this, { currency: false })
+        }
+
+        toString() {
+            return `${this.amount} ${this.currency}`
+        }
+    }
+
+    const money = new Money()
+    expect(isObservableProp(money, "amount")).toBe(true)
+    expect(isObservableProp(money, "currency")).toBe(false)
+    expect(isAction(money.toString)).toBe(true)
+    expect(String(money)).toBe("1 EUR")
+
+    const o = observable({ value: 1, toString: () => "o" }, {})
+    expect(isObservableProp(o, "value")).toBe(true)
+    expect(String(o)).toBe("o")
+})
+
+test("makeAutoObservable + override + annotation cache #2832", () => {
+    class Clazz {
+        auto = []
+        override = []
+        constructor() {
+            makeAutoObservable(this, {
+                override: observableRef
+            })
+        }
+    }
+
+    ;[new Clazz(), new Clazz()].forEach(x => {
+        expect(isObservableProp(x, "auto")).toBe(true)
+        expect(isObservable(x.auto)).toBe(true)
+        expect(isObservableProp(x, "override")).toBe(true)
+        expect(isObservable(x.override)).toBe(false)
+    })
+})
+
+test("flowBound #2941", async () => {
+    class Clazz {
+        constructor() {
+            makeObservable(this, {
+                flowBound: flowBound
+            })
+        }
+        *flowBound() {
+            return this
+        }
+    }
+    new Clazz()
+    new Clazz()
+    expect(isFlow(Clazz.prototype.flowBound)).toBe(true)
+    expect(await Clazz.prototype.flowBound.call("ctx")).toBe("ctx")
+})
+
+test("makeAutoObservable + Object.create #3197", () => {
+    const proto = {
+        action() {},
+        *flow() {},
+        get computed() {
+            return null
+        }
+    }
+    const o = Object.create(proto)
+    o.observable = 5
+    makeAutoObservable(o)
+    expect(isAction(proto.action)).toBe(true)
+    expect(isFlow(proto.flow)).toBe(true)
+    expect(isComputedProp(o, "computed")).toBe(true)
+    expect(isObservableProp(o, "observable")).toBe(true)
+})
+
+test("flowBound #3271", async () => {
+    class Test {
+        constructor() {
+            makeObservable(this, { flowBound: flowBound })
+        }
+        *flowBound() {
+            return this
+        }
+    }
+
+    const t1 = new Test()
+    const t2 = new Test()
+
+    // Make sure flow is actually bindable
+    expect(
+        await flow(function* () {
+            return this
+        }).bind(t1)()
+    ).toBe(t1)
+
+    expect(t1.hasOwnProperty("flowBound")).toBe(true)
+    expect(t2.hasOwnProperty("flowBound")).toBe(true)
+
+    expect(t1.flowBound !== t2.flowBound).toBe(true)
+
+    expect(await t1.flowBound.call(null)).toBe(t1)
+    expect(await t2.flowBound.call(null)).toBe(t2)
+})
+
+describe("default annotation from options", () => {
+    const defaultAnnotationOf = (o: object) => _getAdministration(o).defaultAnnotation_
+
+    test("is shared between objects created with equivalent options", () => {
+        const a = observable({ x: {} }, undefined, { deep: false })
+        const b = observable({ x: {} }, undefined, { deep: false, name: "b" })
+        const c = observable({ x: {} }, undefined, { autoBind: true })
+        const d = observable({ x: {} }, undefined, { autoBind: true, deep: false })
+        const e = observable({ x: {} }, undefined, { deep: true, autoBind: false })
+        const plain = observable({ x: {} })
+
+        expect(defaultAnnotationOf(a)).toBe(defaultAnnotationOf(b))
+        expect(defaultAnnotationOf(e)).toBe(defaultAnnotationOf(plain))
+        const distinct = new Set([a, c, d, e].map(defaultAnnotationOf))
+        expect(distinct.size).toBe(4)
+    })
+
+    test("deep: false keeps values as refs, also for later extensions", () => {
+        const o = observable({ x: { y: 1 } }, undefined, { deep: false })
+        expect(isObservable(o.x)).toBe(false)
+        expect(isObservableProp(o, "x")).toBe(true)
+        extendObservable(o, { z: { w: 1 } })
+        expect(isObservable((o as any).z)).toBe(false)
+        expect(isObservableProp(o, "z")).toBe(true)
+        ;(o as any).q = { r: 1 }
+        expect(isObservable((o as any).q)).toBe(false)
+
+        const deep = observable({ x: { y: 1 } }, undefined, { name: "deep" })
+        expect(isObservable(deep.x)).toBe(true)
+    })
+
+    test("autoBind binds functions, with and without deep", () => {
+        for (const deep of [true, false]) {
+            const o = observable(
+                {
+                    v: 1,
+                    inc() {
+                        this.v++
+                    }
+                },
+                undefined,
+                { autoBind: true, deep }
+            )
+            const inc = o.inc
+            inc()
+            expect(o.v).toBe(2)
+        }
+
+        class Store {
+            v = 1
+            constructor() {
+                makeAutoObservable(this, undefined, { autoBind: true })
+            }
+            inc() {
+                this.v++
+            }
+        }
+        const s1 = new Store()
+        const s2 = new Store()
+        const inc = s1.inc
+        inc()
+        expect(s1.v).toBe(2)
+        expect(defaultAnnotationOf(s1)).toBe(defaultAnnotationOf(s2))
+    })
+
+    test("defaultDecorator still takes precedence", () => {
+        const o = observable({ x: { y: 1 } }, undefined, {
+            deep: true,
+            defaultDecorator: observableRef
+        })
+        expect(isObservable(o.x)).toBe(false)
+        expect(defaultAnnotationOf(o)).toBe(observableRef)
+    })
+
+    test("makeObservable with explicit annotations and options", () => {
+        class Store {
+            a = { n: 1 }
+            b = { n: 1 }
+            constructor() {
+                makeObservable(this, { a: observable, b: true }, { deep: false })
+            }
+        }
+        const s = new Store()
+        expect(isObservable(s.a)).toBe(true)
+        expect(isObservable(s.b)).toBe(false)
+        expect(isObservableProp(s, "b")).toBe(true)
+    })
+})

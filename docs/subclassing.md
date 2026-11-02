@@ -1,0 +1,205 @@
+---
+title: Inheritance
+sidebar_label: Inheritance
+hide_title: true
+---
+
+<script async type="text/javascript" src="//cdn.carbonads.com/carbon.js?serve=CEBD4KQ7&placement=mobxjsorg" id="_carbonads_js"></script>
+
+# Inheritance
+
+Subclassing is supported with [limitations](#limitations). Most notably you can only **override actions/flows/computeds on prototype** - you cannot override _[field declarations](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes#field_declarations)_. When using `makeObservable`, use the `override` annotation for methods/getters overridden in a subclass. When using modern decorators, redecorate the overridden prototype method/getter in the subclass. Try to keep things simple and prefer composition over inheritance.
+
+<!--DOCUSAURUS_CODE_TABS-->
+<!--makeObservable-->
+
+```javascript
+import { makeObservable, observable, computed, action, actionBound, flow, override } from "mobx"
+
+class Parent {
+    // Annotated instance fields are NOT overridable
+    observable = 0
+    arrowAction = () => {}
+
+    // Non-annotated instance fields are overridable
+    overridableArrowAction = action(() => {})
+
+    // Annotated prototype methods/getters are overridable
+    action() {}
+    actionBound() {}
+    get computed() {}
+    *flow() {}
+
+    constructor(value) {
+        makeObservable(this, {
+            observable: observable,
+            arrowAction: action,
+            action: action,
+            actionBound: actionBound,
+            computed: computed,
+            flow: flow
+        })
+    }
+}
+
+class Child extends Parent {
+    /* --- INHERITED --- */
+    // THROWS - TypeError: Cannot redefine property
+    // observable = 5
+    // arrowAction = () = {}
+
+    // OK - not annotated
+    overridableArrowAction = action(() => {})
+
+    // OK - prototype
+    action() {}
+    actionBound() {}
+    get computed() {}
+    *flow() {}
+
+    /* --- NEW --- */
+    childObservable = 0
+    childArrowAction = () => {}
+    childAction() {}
+    childActionBound() {}
+    get childComputed() {}
+    *childFlow() {}
+
+    constructor(value) {
+        super()
+        makeObservable(this, {
+            // inherited
+            action: override,
+            actionBound: override,
+            computed: override,
+            flow: override,
+            // new
+            childObservable: observable,
+            childArrowAction: action,
+            childAction: action,
+            childActionBound: actionBound,
+            childComputed: computed,
+            childFlow: flow
+        })
+    }
+}
+```
+
+<!--Modern decorators-->
+
+```javascript
+import { observable, computed, action, actionBound, flow } from "mobx"
+
+class Parent {
+    // Observable state fields are inherited, but should not be re-annotated
+    // or overridden by subclasses.
+    @observable accessor observable = 0
+
+    // Decorated instance fields should not be re-annotated or overridden.
+    @action arrowAction = () => {}
+
+    // Non-decorated instance fields are overridable.
+    overridableArrowAction = action(() => {})
+
+    // Decorated prototype methods/getters are overridable.
+    @action action() {}
+    @actionBound actionBound() {}
+    @computed get computed() {}
+    @flow *flow() {}
+}
+
+class Child extends Parent {
+    /* --- INHERITED --- */
+    // Unsupported: do not re-annotate or override observable/accessor fields.
+    // @observable accessor observable = 5
+    // @action arrowAction = () => {}
+
+    // OK - not decorated
+    overridableArrowAction = action(() => {})
+
+    // OK - prototype
+    @action action() {}
+    @actionBound actionBound() {}
+    @computed get computed() {
+        return super.computed
+    }
+    @flow *flow() {
+        return yield super.flow()
+    }
+
+    /* --- NEW --- */
+    @observable accessor childObservable = 0
+    @action childArrowAction = () => {}
+    @action childAction() {}
+    @actionBound childActionBound() {}
+    @computed get childComputed() {}
+    @flow *childFlow() {}
+}
+```
+
+<!--END_DOCUSAURUS_CODE_TABS-->
+
+## Limitations
+
+1. Only `action`, `computed`, `flow`, `actionBound` defined **on prototype** can be **overridden** by subclass.
+1. Field can't be re-annotated in subclass, except with `override`.
+1. `makeAutoObservable` does not support subclassing.
+1. Extending builtins (`ObservableMap`, `ObservableArray`, etc) is not supported.
+1. You can't provide different options to `makeObservable` in subclass.
+1. You can't mix annotations/decorators in single inheritance chain.
+1. [All other limitations apply as well](observable-state.md#limitations)
+
+### `TypeError: Cannot redefine property`
+
+If you see this, you're probably trying to **override arrow function** in subclass `x = () => {}`. That's not possible because **all annotated** fields of classes are **non-configurable** ([see limitations](observable-state.md#limitations)). You have two options:
+
+<details><summary>1. Move function to prototype and use `actionBound` annotation instead</summary>
+
+```javascript
+class Parent {
+    // action = () => {};
+    // =>
+    action() {}
+
+    constructor() {
+        makeObservable(this, {
+            action: actionBound
+        })
+    }
+}
+class Child {
+    action() {}
+
+    constructor() {
+        super()
+        makeObservable(this, {
+            action: override
+        })
+    }
+}
+```
+
+</details>
+<details><summary>2. Remove `action` annotation and wrap the function in action manually: `x = action(() => {})`</summary>
+
+```javascript
+class Parent {
+    // action = () => {};
+    // =>
+    action = action(() => {})
+
+    constructor() {
+        makeObservable(this, {}) // <-- annotation removed
+    }
+}
+class Child {
+    action = action(() => {})
+
+    constructor() {
+        super()
+        makeObservable(this, {}) // <-- annotation removed
+    }
+}
+```
+
+</details>
